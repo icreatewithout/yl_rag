@@ -1,0 +1,14 @@
+services:
+  api: &main_app
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    image: yl_rag:${YL_RAG_VERSION:-latest}
+    restart: always
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      YL_RAG_HOST: 0.0.0.0
+
+
