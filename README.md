@@ -10,8 +10,11 @@ tool.
 To run the project use this set of commands:
 
 ```bash
-uv sync --locked
-uv run -m yl_rag
+sudo uv sync --locked
+```
+
+```bash
+sudo uv run -m yl_rag
 ```
 
 This will start the server on the configured host.
