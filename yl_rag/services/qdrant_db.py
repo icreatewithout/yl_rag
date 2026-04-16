@@ -2,6 +2,7 @@ import hashlib
 import math
 import time
 
+import numpy as np
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import UnexpectedResponse
 from qdrant_client.models import (
@@ -32,7 +33,7 @@ class QdrantService:
             self._init_db()
         except UnexpectedResponse as e:
             # 💡 关键：捕获 502/401 等错误，允许应用先启动，而不是直接崩溃
-            print(f"⚠️ Warning: Cannot connect to Qdrant at startup (Reason: {e}). ")
+            print(f"Warning: Cannot connect to Qdrant at startup (Reason: {e}). ")
             print("Please ensure Qdrant Docker is running and API Key is correct.")
 
     def _init_db(self):
@@ -41,7 +42,7 @@ class QdrantService:
             collections_response = self.client.get_collections()
             existing_collections = [c.name for c in collections_response.collections]
             if self.collection not in existing_collections:
-                print(f"📡 Collection '{self.collection}' not found. Creating...")
+                print(f"Collection '{self.collection}' not found. Creating...")
 
                 # 创建集合
                 self.client.create_collection(
@@ -51,18 +52,26 @@ class QdrantService:
                         distance=Distance.COSINE,  # 推荐使用余弦相似度
                     ),
                     # 可选：如果你需要更高的性能，可以配置分片数
-                    # shard_number=2
+                    shard_number=2,
                 )
-                print(f"✅ Collection '{self.collection}' created successfully.")
+                print(f" Collection '{self.collection}' created successfully.")
             else:
                 print(
-                    f"ℹ️ Collection '{self.collection}' already exists. Skipping creation."
+                    f"Collection '{self.collection}' already exists. Skipping creation."
                 )
         except Exception as e:
-            print(f"❌ Error during collection initialization: {e}")
+            print(f" Error during collection initialization: {e}")
 
     def add_memory(self, text: str, id: str, tags: list, role: str):
-        vec = embedding_service.encode(text).tolist()
+        vec = embedding_service.encode(text)
+        # 如果 vector 的 shape 是 (1, 768)，需要降维成 (768,)
+        # 如果使用 numpy，可以直接用 .flatten() 或 .tolist()
+        if isinstance(vec, np.ndarray):
+            # 确保它是一维数组：[0.1, 0.2, ...]
+            processed_vector = vec.flatten().tolist()
+        else:
+            processed_vector = vec
+
         doc_id = hashlib.md5(text.encode()).hexdigest()
         payload = {
             "text": text,
@@ -73,13 +82,13 @@ class QdrantService:
         }
         self.client.upsert(
             collection_name=self.collection,
-            points=[PointStruct(id=doc_id, vector=vec, payload=payload)],
+            points=[PointStruct(id=doc_id, vector=processed_vector, payload=payload)],
         )
         memory_graph.add_memory(doc_id, tags, id)
 
     def search(self, query: str, id_filter: str = None, top_k: int = 5):
         # 1. 粗排 (召回候选集)
-        query_vec = embedding_service.encode(query).tolist()
+        query_vec = embedding_service.encode(query).flatten().tolist()
         filt = (
             Filter(must=[FieldCondition(key="id", match=MatchValue(value=id_filter))])
             if id_filter
