@@ -121,3 +121,28 @@ For running tests on your local machine.
 ```bash
 pytest -vv .
 ```
+
+```bash
+
+curl -X 'POST' \
+  'http://localhost:8000/api/vi/memory/add' 
+  -H 'Content-Type: application/json' 
+  -d '{
+  "text": "小明在2024年4月16日买了一本关于Python异步编程的书，存放在书房的第三个书架上。",
+  "room": "study_room",
+  "shelf": "shelf_03",
+  "tags": ["小明", "Python", "异步编程", "购物"]
+}'
+```
+
+```bash
+curl -X 'POST' 
+  'http://localhost:8000/api/vi/memory/search' 
+  -H 'Content-Type: application/json' 
+  -d '{
+  "text": "小明最近买了什么书？",
+  "room_filter": "study_room",
+  "top_k": 3
+}'
+
+```

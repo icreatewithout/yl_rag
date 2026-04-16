@@ -1,48 +1,56 @@
 import enum
-from pathlib import Path
-from tempfile import gettempdir
+import os
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-TEMP_DIR = Path(gettempdir())
-
 
 class LogLevel(enum.StrEnum):
-    """Possible log levels."""
-
-    NOTSET = "NOTSET"
     DEBUG = "DEBUG"
     INFO = "INFO"
-    WARNING = "WARNING"
     ERROR = "ERROR"
-    FATAL = "FATAL"
+
+
+APP_ENV = os.getenv("YL_RAG_ENVIRONMENT", "dev")
+ENV_FILE = f".env.{APP_ENV}"
 
 
 class Settings(BaseSettings):
-    """
-    Application settings.
+    app_name: str = "YL-RAG"
+    environment: str = "dev"
 
-    These parameters can be configured
-    with environment variables.
-    """
+    qdrant_host: str = "localhost"
+    qdrant_port: int = 6333
+    qdrant_api_key: str | None = "112300"
+    collection_name: str = "memory_palace"
 
+    embedder_model: str = "BAAI/bge-base-zh-v1.5"
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    time_decay_lambda: float = 0.05
+    model_cache_dir: str = "./cache/models"
+
+    log_level: LogLevel = LogLevel.DEBUG
+
+    # --- 运行参数 ---
     host: str = "127.0.0.1"
     port: int = 8000
     # quantity of workers for uvicorn
     workers_count: int = 1
     # Enable uvicorn reloading
-    reload: bool = False
+    reload: bool = True
 
-    # Current environment
-    environment: str = "dev"
-
-    log_level: LogLevel = LogLevel.INFO
+    print(f".env.{os.getenv('APP_ENV', 'dev')}")
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILE,
         env_prefix="YL_RAG_",
         env_file_encoding="utf-8",
+        extra="ignore",  # 允许 .env 中存在类中没定义的变量
     )
 
 
 settings = Settings()
+
+# 仅在调试时打印
+if settings.log_level == LogLevel.DEBUG:
+    print(f" Loaded config from: {ENV_FILE}")
+    print(f" Qdrant Host: {settings.qdrant_host}")
