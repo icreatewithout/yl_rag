@@ -141,7 +141,7 @@ curl -X 'POST'
   -H 'Content-Type: application/json' 
   -d '{
   "text": "小明最近买了什么书？",
-  "room_filter": "study_room",
+  "id_filter": "study_room",
   "top_k": 3
 }'
 

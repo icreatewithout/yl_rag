@@ -61,13 +61,13 @@ class QdrantService:
         except Exception as e:
             print(f"❌ Error during collection initialization: {e}")
 
-    def add_memory(self, text: str, room: str, tags: list, shelf: str):
+    def add_memory(self, text: str, id: str, tags: list, role: str):
         vec = embedding_service.encode(text).tolist()
         doc_id = hashlib.md5(text.encode()).hexdigest()
         payload = {
             "text": text,
-            "room": room,
-            "shelf": shelf,
+            "id": id,
+            "role": role,
             "tags": tags,
             "created_at": time.time(),
         }
@@ -75,16 +75,14 @@ class QdrantService:
             collection_name=self.collection,
             points=[PointStruct(id=doc_id, vector=vec, payload=payload)],
         )
-        memory_graph.add_memory(doc_id, tags, room)
+        memory_graph.add_memory(doc_id, tags, id)
 
-    def search(self, query: str, room_filter: str = None, top_k: int = 5):
+    def search(self, query: str, id_filter: str = None, top_k: int = 5):
         # 1. 粗排 (召回候选集)
         query_vec = embedding_service.encode(query).tolist()
         filt = (
-            Filter(
-                must=[FieldCondition(key="room", match=MatchValue(value=room_filter))]
-            )
-            if room_filter
+            Filter(must=[FieldCondition(key="id", match=MatchValue(value=id_filter))])
+            if id_filter
             else None
         )
 
@@ -129,7 +127,7 @@ class QdrantService:
             results.append(
                 {
                     "id": h.id,
-                    "payload": h.payload.get("text", ""),
+                    "payload": h.payload,
                     "score": float(h.score),
                     "created_at": h.payload.get("created_at", 0.0),
                 }

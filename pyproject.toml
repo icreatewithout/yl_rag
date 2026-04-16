@@ -23,6 +23,7 @@ dependencies = [
   "structlog>=25.5.0",
   "python-dotenv>=1.2.2",
   "optimum[onnxruntime]>=2.1.0",
+  "huggingface-hub[hf-xet]>=0.36.2",
 ]
 
 [dependency-groups]
