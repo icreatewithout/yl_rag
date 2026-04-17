@@ -48,6 +48,21 @@ class MemoryGraph:
             temp_path.replace(self.path)
             self.needs_save = False
 
+    @staticmethod
+    def _tag_match_score(query: str, tag: str) -> float:
+        query_l = query.lower().strip()
+        tag_l = tag.lower().strip()
+        if not query_l or not tag_l:
+            return 0.0
+        if tag_l in query_l:
+            return 1.0
+        query_words = set(query_l.split())
+        tag_words = set(tag_l.split())
+        if not query_words or not tag_words:
+            return 0.0
+        overlap = len(query_words & tag_words)
+        return overlap / max(len(tag_words), 1)
+
     def add_memory(self, doc_id: str, tags: list[str], room: str) -> None:
         """Add one memory node and connect it to room/tag nodes."""
         with self.lock:
@@ -60,6 +75,28 @@ class MemoryGraph:
                     self.graph.add_node(tag, type="tag")
                 self.graph.add_edge(doc_id, tag, relation="about")
             self.needs_save = True
+
+    def get_memory_tags(self, doc_id: str) -> set[str]:
+        """Return tags directly attached to one memory node."""
+        with self.lock:
+            if not self.graph.has_node(doc_id):
+                return set()
+            return {
+                node
+                for _, node, data in self.graph.out_edges(doc_id, data=True)
+                if data.get("relation") == "about"
+            }
+
+    def graph_score(self, doc_id: str, room: str | None, query: str) -> float:
+        """Calculate graph-based boost score for one memory item."""
+        tags = self.get_memory_tags(doc_id)
+        if not tags:
+            return 0.0
+
+        tag_scores = [self._tag_match_score(query, tag) for tag in tags]
+        tag_score = sum(tag_scores) / max(len(tags), 1)
+        room_bonus = 0.1 if room and self.graph.has_edge(doc_id, room) else 0.0
+        return tag_score + room_bonus
 
 
 memory_graph = MemoryGraph()

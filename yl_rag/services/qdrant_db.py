@@ -139,7 +139,12 @@ class QdrantService:
                     "created_at": created_at,
                 }
             )
-        return self._rerank_and_sort(query=query, candidates=candidates, top_k=top_k)
+        return self._rerank_and_sort(
+            query=query,
+            id_filter=id_filter,
+            candidates=candidates,
+            top_k=top_k,
+        )
 
     def _search_local(
         self,
@@ -171,11 +176,17 @@ class QdrantService:
                     "created_at": created_at,
                 }
             )
-        return self._rerank_and_sort(query=query, candidates=candidates, top_k=top_k)
+        return self._rerank_and_sort(
+            query=query,
+            id_filter=id_filter,
+            candidates=candidates,
+            top_k=top_k,
+        )
 
     def _rerank_and_sort(
         self,
         query: str,
+        id_filter: str | None,
         candidates: list[dict[str, Any]],
         top_k: int,
     ) -> list[dict[str, Any]]:
@@ -188,8 +199,18 @@ class QdrantService:
         rerank_scores = embedding_service.rerank(query, texts)
 
         for idx, rerank_score in enumerate(rerank_scores):
-            base = top_candidates[idx]["score"]
-            top_candidates[idx]["score"] = 0.7 * base + 0.3 * float(rerank_score)
+            candidate = top_candidates[idx]
+            base = candidate["score"]
+            graph_score = memory_graph.graph_score(
+                doc_id=str(candidate["id"]),
+                room=id_filter or candidate["payload"].get("id"),
+                query=query,
+            )
+            candidate["score"] = (
+                0.6 * base
+                + 0.3 * float(rerank_score)
+                + 0.1 * graph_score
+            )
 
         top_candidates.sort(key=lambda item: item["score"], reverse=True)
         return top_candidates[:top_k]
