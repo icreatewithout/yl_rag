@@ -1,5 +1,9 @@
+from __future__ import annotations
+
+import hashlib
 import logging
-import os  # <--- 新增导入
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -7,83 +11,103 @@ from FlagEmbedding import FlagModel, FlagReranker
 
 from yl_rag.settings import settings
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
-    def __init__(self):
-        # 1. 确定设备
+    """Embedding + rerank service with lazy init and offline fallback."""
+
+    def __init__(self) -> None:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        os.makedirs(settings.model_cache_dir, exist_ok=True)
-
-        logger.info(f"🚀 Initializing AI Models on {self.device.upper()}...")
-
-        # 2. 优化加载参数
-        # use_fp16: GPU 下开启半精度，显存减半，速度翻倍
+        Path(settings.model_cache_dir).mkdir(parents=True, exist_ok=True)
         self.use_fp16 = self.device == "cuda"
+        self.embedder: Any | None = None
+        self.reranker: Any | None = None
+        self.ready = False
 
-        # 加载 Embedder
-        self.embedder = self._safe_load(
-            FlagModel, settings.embedder_model, is_reranker=False
-        )
-
-        # 加载 Reranker
-        self.reranker = self._safe_load(
-            FlagReranker, settings.reranker_model, is_reranker=True
-        )
-
-        logger.info("✅ AI Models loaded successfully.")
-
-    def _safe_load(self, model_class, name, is_reranker=False):
-        # 针对 BGE 模型的参数微调
-        # 注意：FlagEmbedding 的推理后端在设置了 use_onnx=True 时，
-        # 需要确保你已经安装了 onnxruntime-gpu (CUDA) 或 onnxruntime (CPU)
+    def _safe_load(self, model_class: Any, name: str, *, is_reranker: bool) -> Any:
         common_kwargs = {
             "model_name_or_path": name,
             "cache_dir": settings.model_cache_dir,
             "use_fp16": self.use_fp16,
         }
-
         try:
-            # Reranker 和 FlagModel 的参数名略有不同
             if is_reranker:
                 return model_class(**common_kwargs)
-            # FlagModel 额外支持 query 指令优化
             return model_class(**common_kwargs, devices=self.device)
-        except Exception as e:
-            logger.warning(f"Failed to load {name} on {self.device}: {e}")
-            if self.device == "cuda":
-                logger.info("🔄 Falling back to CPU...")
-                common_kwargs["use_fp16"] = False
-                if is_reranker:
-                    return model_class(**common_kwargs)
-                return model_class(**common_kwargs, devices="cpu")
-            raise e
+        except Exception as err:
+            logger.warning("Model load failed for %s on %s: %s", name, self.device, err)
+            if self.device != "cuda":
+                raise
+            logger.info("Falling back to CPU for model %s", name)
+            common_kwargs["use_fp16"] = False
+            if is_reranker:
+                return model_class(**common_kwargs)
+            return model_class(**common_kwargs, devices="cpu")
+
+    def _ensure_models(self) -> None:
+        if self.ready:
+            return
+        try:
+            self.embedder = self._safe_load(
+                FlagModel,
+                settings.embedder_model,
+                is_reranker=False,
+            )
+            self.reranker = self._safe_load(
+                FlagReranker,
+                settings.reranker_model,
+                is_reranker=True,
+            )
+            self.ready = True
+            logger.info("Embedding models are ready on %s", self.device)
+        except Exception as err:
+            logger.warning("Using offline fallback embedder due to init error: %s", err)
+            self.ready = False
+
+    @staticmethod
+    def _hash_embedding(text: str, *, dim: int = 768) -> np.ndarray:
+        digest = hashlib.sha256(text.encode("utf-8")).digest()
+        seed = int.from_bytes(digest[:8], byteorder="big", signed=False)
+        rng = np.random.default_rng(seed)
+        vector = rng.standard_normal(dim)
+        norm = np.linalg.norm(vector)
+        return (vector / norm) if norm else vector
 
     def encode(self, texts: str | list[str]) -> np.ndarray:
-        """
-        优化：支持批量编码，显著提升吞吐量
-        """
-        # 自动处理单条文本
+        """Encode text(s) into dense vectors."""
         input_texts = [texts] if isinstance(texts, str) else texts
-
-        # encode 内部会自动处理 batching
-        return self.embedder.encode(input_texts, batch_size=32, convert_to_numpy=True)
+        self._ensure_models()
+        if self.ready and self.embedder is not None:
+            return self.embedder.encode(
+                input_texts,
+                batch_size=settings.embed_batch_size,
+                convert_to_numpy=True,
+            )
+        vectors = [self._hash_embedding(text) for text in input_texts]
+        return np.asarray(vectors, dtype=np.float32)
 
     def rerank(self, query: str, texts: list[str]) -> list[float]:
-        """
-        优化：加入空列表判断与类型保护
-        """
+        """Rerank candidate texts for one query."""
         if not texts:
             return []
+        self._ensure_models()
+        if self.ready and self.reranker is not None:
+            pairs = [[query, text] for text in texts]
+            scores = self.reranker.compute_score(
+                pairs,
+                batch_size=settings.rerank_batch_size,
+            )
+            return [float(score) for score in scores]
 
-        pairs = [[query, t] for t in texts]
-        # compute_score 在 BGE 里面默认返回 List[float]
-        scores = self.reranker.compute_score(pairs, batch_size=32)
-
-        # 确保返回的是 Python 原生 float 列表，方便 JSON 序列化
-        return [float(s) for s in scores]
+        query_terms = set(query.lower().split())
+        scores: list[float] = []
+        for text in texts:
+            text_terms = set(text.lower().split())
+            union = len(query_terms | text_terms) or 1
+            overlap = len(query_terms & text_terms)
+            scores.append(overlap / union)
+        return scores
 
 
 embedding_service = EmbeddingService()
