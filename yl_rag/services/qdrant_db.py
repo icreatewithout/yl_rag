@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import math
 import time
 
@@ -18,6 +19,8 @@ from yl_rag.services.embedder import embedding_service
 from yl_rag.services.memory_graph import memory_graph
 from yl_rag.settings import settings
 
+logger = logging.getLogger(__name__)
+
 
 class QdrantService:
     def __init__(self):
@@ -25,54 +28,43 @@ class QdrantService:
             host=settings.qdrant_host,
             port=settings.qdrant_port,
             api_key=settings.qdrant_api_key,
-            https=False,  # 强制关闭 HTTPS
-            check_compatibility=False,  # 关闭版本检查
+            # 开发环境默认 HTTP，生产环境请在网关层启用 TLS
+            https=False,
+            check_compatibility=False,
         )
         self.collection = settings.collection_name
         try:
             self._init_db()
-        except UnexpectedResponse as e:
-            # 💡 关键：捕获 502/401 等错误，允许应用先启动，而不是直接崩溃
-            print(f"Warning: Cannot connect to Qdrant at startup (Reason: {e}). ")
-            print("Please ensure Qdrant Docker is running and API Key is correct.")
+        except UnexpectedResponse as exc:
+            # 启动容错：连接失败时不中断服务进程，避免整个 API 不可用
+            logger.warning(
+                "Cannot connect to Qdrant during startup: %s. "
+                "Please verify service status and credentials.",
+                exc,
+            )
 
     def _init_db(self):
-        try:
-            # 获取所有集合名称
-            collections_response = self.client.get_collections()
-            existing_collections = [c.name for c in collections_response.collections]
-            if self.collection not in existing_collections:
-                print(f"Collection '{self.collection}' not found. Creating...")
+        collections_response = self.client.get_collections()
+        existing_collections = [c.name for c in collections_response.collections]
+        if self.collection in existing_collections:
+            logger.info("Collection '%s' already exists.", self.collection)
+            return
 
-                # 创建集合
-                self.client.create_collection(
-                    collection_name=self.collection,
-                    vectors_config=VectorParams(
-                        size=768,  # BGE-Base 模型的向量维度是 768
-                        distance=Distance.COSINE,  # 推荐使用余弦相似度
-                    ),
-                    # 可选：如果你需要更高的性能，可以配置分片数
-                    shard_number=2,
-                )
-                print(f" Collection '{self.collection}' created successfully.")
-            else:
-                print(
-                    f"Collection '{self.collection}' already exists. Skipping creation."
-                )
-        except Exception as e:
-            print(f" Error during collection initialization: {e}")
+        logger.info("Collection '%s' not found, creating...", self.collection)
+        self.client.create_collection(
+            collection_name=self.collection,
+            vectors_config=VectorParams(size=768, distance=Distance.COSINE),
+            shard_number=2,
+        )
+        logger.info("Collection '%s' created successfully.", self.collection)
 
     def add_memory(self, text: str, id: str, tags: list, role: str):
         vec = embedding_service.encode(text)
-        # 如果 vector 的 shape 是 (1, 768)，需要降维成 (768,)
-        # 如果使用 numpy，可以直接用 .flatten() 或 .tolist()
-        if isinstance(vec, np.ndarray):
-            # 确保它是一维数组：[0.1, 0.2, ...]
-            processed_vector = vec.flatten().tolist()
-        else:
-            processed_vector = vec
+        # 向量标准化为一维 list，确保可被 qdrant-client 序列化
+        processed_vector = vec.flatten().tolist() if isinstance(vec, np.ndarray) else vec
 
-        doc_id = hashlib.md5(text.encode()).hexdigest()
+        # 使用 sha256 替代 md5，降低碰撞风险
+        doc_id = hashlib.sha256(text.encode("utf-8")).hexdigest()
         payload = {
             "text": text,
             "id": id,
@@ -87,7 +79,6 @@ class QdrantService:
         memory_graph.add_memory(doc_id, tags, id)
 
     def search(self, query: str, id_filter: str = None, top_k: int = 5):
-        # 1. 粗排 (召回候选集)
         query_vec = embedding_service.encode(query).flatten().tolist()
         filt = (
             Filter(must=[FieldCondition(key="id", match=MatchValue(value=id_filter))])
@@ -95,12 +86,11 @@ class QdrantService:
             else None
         )
 
-        # 如果你的版本依然报 query_points 找不到，请确保 pip install --upgrade qdrant-client
         response = self.client.query_points(
             collection_name=self.collection,
-            query=query_vec,  # 传入向量
-            query_filter=filt,  # 过滤器
-            limit=20,  # 粗排召回数量
+            query=query_vec,
+            query_filter=filt,
+            limit=20,
             with_payload=True,
         )
 
@@ -108,36 +98,31 @@ class QdrantService:
         if not hits:
             return []
 
-        # 2. 时间衰减计算
         now = time.time()
         candidates = []
         for hit in hits:
             t_created = hit.payload.get("created_at", now)
             time_delta_seconds = max(0, now - t_created)
             decay = math.exp(-settings.time_decay_lambda * (time_delta_seconds / 86400))
-            # 注意：query_points 返回的 score 在 hit.score 中
-            score = max(0, int(hit.score)) * decay
+            # 修复异常：避免 int 截断导致大多数分数变成 0，影响排序质量
+            score = max(0.0, float(hit.score)) * decay
             candidates.append({"hit": hit, "decay_score": score})
 
         candidates.sort(key=lambda x: x["decay_score"], reverse=True)
         top_10 = candidates[:10]
 
-        # 3. 精排 (Reranker)
         texts = [c["hit"].payload["text"] for c in top_10]
         rr_scores = embedding_service.rerank(query, texts)
 
-        print(top_10)
-
-        # 4. 封装输出
         results = []
         for i, score in enumerate(rr_scores):
             h = top_10[i]["hit"]
-            print(h)
             results.append(
                 {
                     "id": h.id,
                     "payload": h.payload,
-                    "score": float(h.score),
+                    # 综合时间衰减 + reranker，结果更稳定
+                    "score": float(score) * top_10[i]["decay_score"],
                     "created_at": h.payload.get("created_at", 0.0),
                 }
             )
