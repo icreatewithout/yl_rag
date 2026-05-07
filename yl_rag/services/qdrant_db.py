@@ -28,15 +28,16 @@ class QdrantService:
             host=settings.qdrant_host,
             port=settings.qdrant_port,
             api_key=settings.qdrant_api_key,
-            # 开发环境默认 HTTP，生产环境请在网关层启用 TLS
+            # 保留原思路：开发环境默认 HTTP（生产建议网关层启用 TLS）
             https=False,
+            # 保留原思路：关闭版本检查，避免因版本探测阻塞启动
             check_compatibility=False,
         )
         self.collection = settings.collection_name
         try:
             self._init_db()
         except UnexpectedResponse as exc:
-            # 启动容错：连接失败时不中断服务进程，避免整个 API 不可用
+            # 💡 保留原注释语义：捕获 502/401 等错误，允许应用先启动，而不是直接崩溃
             logger.warning(
                 "Cannot connect to Qdrant during startup: %s. "
                 "Please verify service status and credentials.",
@@ -44,26 +45,33 @@ class QdrantService:
             )
 
     def _init_db(self):
+        # 获取所有集合名称
         collections_response = self.client.get_collections()
         existing_collections = [c.name for c in collections_response.collections]
         if self.collection in existing_collections:
-            logger.info("Collection '%s' already exists.", self.collection)
+            logger.info("Collection '%s' already exists. Skipping creation.", self.collection)
             return
 
-        logger.info("Collection '%s' not found, creating...", self.collection)
+        logger.info("Collection '%s' not found. Creating...", self.collection)
         self.client.create_collection(
             collection_name=self.collection,
-            vectors_config=VectorParams(size=768, distance=Distance.COSINE),
+            vectors_config=VectorParams(
+                # 保留原注释：BGE-Base 模型向量维度为 768
+                size=768,
+                # 保留原注释：推荐使用余弦相似度
+                distance=Distance.COSINE,
+            ),
+            # 保留原注释：可通过分片数优化性能
             shard_number=2,
         )
         logger.info("Collection '%s' created successfully.", self.collection)
 
     def add_memory(self, text: str, id: str, tags: list, role: str):
         vec = embedding_service.encode(text)
-        # 向量标准化为一维 list，确保可被 qdrant-client 序列化
+        # 保留原注释：若 shape 是 (1, 768)，需要降维成 (768,)
         processed_vector = vec.flatten().tolist() if isinstance(vec, np.ndarray) else vec
 
-        # 使用 sha256 替代 md5，降低碰撞风险
+        # 安全增强：使用 sha256 替代 md5，降低碰撞风险
         doc_id = hashlib.sha256(text.encode("utf-8")).hexdigest()
         payload = {
             "text": text,
@@ -79,6 +87,7 @@ class QdrantService:
         memory_graph.add_memory(doc_id, tags, id)
 
     def search(self, query: str, id_filter: str = None, top_k: int = 5):
+        # 1. 粗排（召回候选集）
         query_vec = embedding_service.encode(query).flatten().tolist()
         filt = (
             Filter(must=[FieldCondition(key="id", match=MatchValue(value=id_filter))])
@@ -86,6 +95,7 @@ class QdrantService:
             else None
         )
 
+        # 保留原注释语义：若 query_points 不存在，需升级 qdrant-client
         response = self.client.query_points(
             collection_name=self.collection,
             query=query_vec,
@@ -98,22 +108,25 @@ class QdrantService:
         if not hits:
             return []
 
+        # 2. 时间衰减计算
         now = time.time()
         candidates = []
         for hit in hits:
             t_created = hit.payload.get("created_at", now)
             time_delta_seconds = max(0, now - t_created)
             decay = math.exp(-settings.time_decay_lambda * (time_delta_seconds / 86400))
-            # 修复异常：避免 int 截断导致大多数分数变成 0，影响排序质量
+            # 修复异常：避免 int 截断导致分数异常归零
             score = max(0.0, float(hit.score)) * decay
             candidates.append({"hit": hit, "decay_score": score})
 
         candidates.sort(key=lambda x: x["decay_score"], reverse=True)
         top_10 = candidates[:10]
 
+        # 3. 精排（Reranker）
         texts = [c["hit"].payload["text"] for c in top_10]
         rr_scores = embedding_service.rerank(query, texts)
 
+        # 4. 封装输出
         results = []
         for i, score in enumerate(rr_scores):
             h = top_10[i]["hit"]
@@ -121,7 +134,7 @@ class QdrantService:
                 {
                     "id": h.id,
                     "payload": h.payload,
-                    # 综合时间衰减 + reranker，结果更稳定
+                    # 综合时间衰减 + reranker，让时效与语义同时生效
                     "score": float(score) * top_10[i]["decay_score"],
                     "created_at": h.payload.get("created_at", 0.0),
                 }
