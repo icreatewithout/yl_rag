@@ -58,6 +58,48 @@ class NovelWriterService:
         m = pack["moods"][chapter_no % len(pack["moods"])]
         return f"笔调{m}，情节持续{v}；{pack['cadence']}"
 
+
+    def _build_story_bible(self, theme: str, characters: list[CharacterProfile], time_clues: list[str] | None = None) -> dict:
+        """构建写作圣经：人物关系、禁忌清单、时间推进规则。"""
+        relations = []
+        for i, c in enumerate(characters):
+            target = characters[i + 1].name if i + 1 < len(characters) else (characters[0].name if characters else "世界")
+            relations.append({"a": c.name, "b": target, "relation": "既合作又冲突"})
+
+        return {
+            "theme": theme,
+            "character_rules": [
+                f"{c.name}({c.identity}) 的核心目标：{c.goal}，不可在无事件触发下突然放弃。"
+                for c in characters
+            ],
+            "relation_matrix": relations,
+            "timeline_rules": [
+                "章节时间必须递增。",
+                "若发生跳时，必须给出明确转场句。",
+            ],
+            "time_clues": time_clues or [],
+            "forbidden_patterns": [
+                "角色无铺垫黑化/洗白",
+                "已死亡角色无解释复活",
+                "关键谜题无回收",
+            ],
+        }
+
+    def _revise_chapter_text(self, draft: str, chapter_no: int, story_bible: dict) -> str:
+        """二次润色：降低模板感，补充人物关系与因果闭环提示。"""
+        relation_hint = story_bible.get("relation_matrix", [])
+        relation_text = ""
+        if relation_hint:
+            rel = relation_hint[(chapter_no - 1) % len(relation_hint)]
+            relation_text = f"人物关系张力：{rel['a']} 与 {rel['b']} 当前处于‘{rel['relation']}’。"
+
+        return (
+            f"{draft}\n"
+            f"润色要求：避免口号化抒情，优先使用动作与场景表达情绪。\n"
+            f"{relation_text}\n"
+            f"收束要求：本章必须回收至少一个旧线索并投放一个新悬念。"
+        )
+
     def generate_outline(
         self,
         title: str,
@@ -126,6 +168,7 @@ class NovelWriterService:
             self._extract_context(f"{outline.get('title', '')} {theme}", room_id=room_id)
         )[:8]
 
+        story_bible = self._build_story_bible(theme=theme, characters=[CharacterProfile(name=c.get("focus_character", "主角"), identity="角色", goal="推进主线") for c in outline.get("chapter_plan", [])[:4]])
         generated = []
         last_time_idx = 0
         for c in outline.get("chapter_plan", []):
@@ -149,7 +192,8 @@ class NovelWriterService:
                 f"参考素材：{context_hint}\n"
                 f"写作提示：{style_hint} 目标字数≈{words_per_chapter}。"
             )
-            generated.append({"chapter": chapter_no, "time_anchor": anchor, "content": content})
+            polished = self._revise_chapter_text(content, chapter_no, story_bible)
+            generated.append({"chapter": chapter_no, "time_anchor": anchor, "content": polished})
 
         return {
             "title": outline.get("title", "未命名小说"),
@@ -240,7 +284,7 @@ class NovelWriterService:
             style_prompt="现实主义叙事",
             words_per_chapter=700,
         )
-        return {"extracted": extracted, "outline": outline, "novel": novel}
+        return {"extracted": extracted, "story_bible": story_bible, "outline": outline, "novel": novel}
 
 
 novel_writer_service = NovelWriterService()
