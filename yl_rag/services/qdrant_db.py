@@ -66,7 +66,28 @@ class QdrantService:
         )
         logger.info("Collection '%s' created successfully.", self.collection)
 
+
+    def exists_memory(self, text: str, id_filter: str | None = None) -> bool:
+        """检查相同文本是否已存在，避免重复入库。"""
+        text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        must_conditions = [FieldCondition(key="text_hash", match=MatchValue(value=text_hash))]
+        if id_filter:
+            must_conditions.append(FieldCondition(key="id", match=MatchValue(value=id_filter)))
+
+        records, _ = self.client.scroll(
+            collection_name=self.collection,
+            scroll_filter=Filter(must=must_conditions),
+            limit=1,
+            with_payload=False,
+            with_vectors=False,
+        )
+        return len(records) > 0
+
     def add_memory(self, text: str, id: str, tags: list, role: str):
+        if self.exists_memory(text=text, id_filter=id):
+            logger.info("Duplicate memory detected for id=%s, skip insert.", id)
+            return
+
         vec = embedding_service.encode(text)
         # 保留原注释：若 shape 是 (1, 768)，需要降维成 (768,)
         processed_vector = vec.flatten().tolist() if isinstance(vec, np.ndarray) else vec
@@ -75,6 +96,7 @@ class QdrantService:
         doc_id = hashlib.sha256(text.encode("utf-8")).hexdigest()
         payload = {
             "text": text,
+            "text_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
             "id": id,
             "role": role,
             "tags": tags,

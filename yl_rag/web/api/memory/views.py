@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 from pathlib import Path
 
@@ -48,7 +49,12 @@ async def upload_single_document(
         tag_list = [t.strip() for t in tags.split(",") if t.strip()]
 
         chunk_count = 0
+        seen_hashes: set[str] = set()
         for chunk in split_text(parsed.text):
+            chunk_hash = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
+            if chunk_hash in seen_hashes:
+                continue
+            seen_hashes.add(chunk_hash)
             chunk_count += 1
             qdrant_service.add_memory(
                 text=chunk,
@@ -93,20 +99,28 @@ def upload_folder_documents(
     success_files = 0
     total_chunks = 0
     failed: list[dict[str, str]] = []
+    seen_hashes: set[str] = set()
 
     for file_path in files:
         try:
             parsed = parse_document(file_path)
             chunks = split_text(parsed.text)
+            inserted_for_file = 0
             for chunk in chunks:
+                chunk_hash = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
+                if chunk_hash in seen_hashes:
+                    continue
+                seen_hashes.add(chunk_hash)
                 qdrant_service.add_memory(
                     text=chunk,
                     id=user_id,
                     tags=tag_list + [parsed.file_name],
                     role=role,
                 )
-            success_files += 1
-            total_chunks += len(chunks)
+                inserted_for_file += 1
+            if inserted_for_file > 0:
+                success_files += 1
+            total_chunks += inserted_for_file
         except ModuleNotFoundError as exc:
             failed.append({"file": file_path.name, "error": f"缺少依赖: {exc.name}"})
         except Exception as exc:
