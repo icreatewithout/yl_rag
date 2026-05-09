@@ -21,3 +21,30 @@ class SearchResult(BaseModel):
     payload: dict
     score: float
     created_at: float
+
+
+class CharacterInput(BaseModel):
+    name: str = Field(..., description="角色名")
+    identity: str = Field(default="普通人", description="角色身份")
+    goal: str = Field(default="完成成长", description="角色目标")
+
+
+class OutlineGenerateInput(BaseModel):
+    title: str = Field(..., description="小说标题")
+    theme: str = Field(..., description="小说主题")
+    room_id: str = Field(default="id", description="RAG 记忆空间")
+    total_chapters: int = Field(default=8, ge=4, le=30, description="章节总数")
+    characters: list[CharacterInput] = Field(default_factory=list, description="主要角色")
+
+
+class NovelFromOutlineInput(BaseModel):
+    outline: dict = Field(..., description="已生成大纲")
+    room_id: str = Field(default="id", description="RAG 记忆空间")
+    style_prompt: str = Field(default="现实主义叙事", description="文风提示")
+    words_per_chapter: int = Field(default=400, ge=200, le=2000, description="每章字数")
+
+
+class NovelFromPromptInput(BaseModel):
+    prompt: str = Field(..., min_length=10, description="输入文案")
+    room_id: str = Field(default="id", description="RAG 记忆空间")
+    protagonist: str = Field(default="林舟", description="主角名")

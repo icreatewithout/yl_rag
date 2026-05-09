@@ -6,8 +6,16 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from yl_rag.core.models import MemoryInput, SearchQuery, SearchResult
+from yl_rag.core.models import (
+    MemoryInput,
+    NovelFromOutlineInput,
+    NovelFromPromptInput,
+    OutlineGenerateInput,
+    SearchQuery,
+    SearchResult,
+)
 from yl_rag.services.document_ingestion import parse_document, save_upload_file, split_text
+from yl_rag.services.novel_writer import CharacterProfile, novel_writer_service
 from yl_rag.services.qdrant_db import qdrant_service
 
 router = APIRouter()
@@ -135,3 +143,49 @@ def upload_folder_documents(
         "failed": failed,
         "message": "批量文档处理完成，内容已写入 RAG 数据库",
     }
+
+
+@router.post("/novel/outline", tags=["Novel"])
+def generate_outline(data: OutlineGenerateInput):
+    """基于 RAG 记忆生成小说大纲，含时间线与人物弧线。"""
+    try:
+        characters = [
+            CharacterProfile(name=c.name, identity=c.identity, goal=c.goal)
+            for c in data.characters
+        ]
+        return novel_writer_service.generate_outline(
+            title=data.title,
+            theme=data.theme,
+            room_id=data.room_id,
+            characters=characters,
+            total_chapters=data.total_chapters,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"大纲生成失败: {exc}") from exc
+
+
+@router.post("/novel/generate_from_outline", tags=["Novel"])
+def generate_novel_from_outline(data: NovelFromOutlineInput):
+    """根据大纲生成小说章节，内置时间与人物一致性约束。"""
+    try:
+        return novel_writer_service.generate_novel_from_outline(
+            outline=data.outline,
+            room_id=data.room_id,
+            style_prompt=data.style_prompt,
+            words_per_chapter=data.words_per_chapter,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"小说生成失败: {exc}") from exc
+
+
+@router.post("/novel/generate_from_prompt", tags=["Novel"])
+def generate_novel_from_prompt(data: NovelFromPromptInput):
+    """根据输入文案直接生成小说（先建大纲再产出章节）。"""
+    try:
+        return novel_writer_service.generate_novel_from_prompt(
+            prompt=data.prompt,
+            room_id=data.room_id,
+            protagonist=data.protagonist,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"文案生成小说失败: {exc}") from exc
