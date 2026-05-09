@@ -207,6 +207,39 @@ class NovelWriterService:
             "rag_references": rag_contexts,
         }
 
+
+    def generate_single_chapter(
+        self,
+        outline: dict,
+        chapter_index: int,
+        room_id: str,
+        style_prompt: str = "现实主义叙事",
+        words_per_chapter: int = 700,
+    ) -> dict:
+        """按章节单次生成，适用于二次创作逐章返回。"""
+        plans = outline.get("chapter_plan", [])
+        if chapter_index < 1 or chapter_index > len(plans):
+            raise ValueError("chapter_index 超出大纲章节范围")
+
+        chapter_plan = plans[chapter_index - 1]
+        single_outline = {
+            "title": outline.get("title", "未命名小说"),
+            "theme": outline.get("theme", "命运与抉择"),
+            "chapter_plan": [chapter_plan],
+        }
+        generated = self.generate_novel_from_outline(
+            outline=single_outline,
+            room_id=room_id,
+            style_prompt=style_prompt,
+            words_per_chapter=words_per_chapter,
+        )
+        return {
+            "chapter_index": chapter_index,
+            "chapter": generated.get("chapters", [])[0] if generated.get("chapters") else {},
+            "has_next": chapter_index < len(plans),
+            "next_chapter_index": chapter_index + 1 if chapter_index < len(plans) else None,
+        }
+
     def generate_novel_from_prompt(self, prompt: str, room_id: str, protagonist: str) -> dict:
         outline = self.generate_outline(
             title=f"《{protagonist}的故事》",
@@ -271,6 +304,7 @@ class NovelWriterService:
 
         conflict = extracted.get("conflict_hint", "")
         theme = f"{rewrite_theme}；保留原作关系网络；冲突线：{conflict}"
+        story_bible = self._build_story_bible(theme=rewrite_theme, characters=profiles, time_clues=extracted.get("time_clues", []))
         outline = self.generate_outline(
             title=f"《{main_char}：再叙之章》",
             theme=theme,

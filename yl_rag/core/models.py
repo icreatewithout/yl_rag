@@ -56,3 +56,11 @@ class NovelExtractRewriteInput(BaseModel):
     rewrite_theme: str = Field(default="宿命与选择", description="二次创作主题")
     protagonist: str | None = Field(default=None, description="指定主角，不填则自动提取")
     chapters: int = Field(default=8, ge=4, le=30, description="生成章节数")
+
+
+class NovelChapterGenerateInput(BaseModel):
+    outline: dict = Field(..., description="大纲对象")
+    chapter_index: int = Field(..., ge=1, description="要生成的章节序号，从1开始")
+    room_id: str = Field(default="id", description="RAG 记忆空间")
+    style_prompt: str = Field(default="现实主义叙事", description="文风")
+    words_per_chapter: int = Field(default=700, ge=200, le=3000, description="目标字数")

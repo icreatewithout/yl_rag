@@ -6,17 +6,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from yl_rag.core.models import (
-    MemoryInput,
-    NovelExtractRewriteInput,
-    NovelFromOutlineInput,
-    NovelFromPromptInput,
-    OutlineGenerateInput,
-    SearchQuery,
-    SearchResult,
-)
+from yl_rag.core.models import MemoryInput, SearchQuery, SearchResult
 from yl_rag.services.document_ingestion import parse_document, save_upload_file, split_text
-from yl_rag.services.novel_writer import CharacterProfile, novel_writer_service
 from yl_rag.services.qdrant_db import qdrant_service
 
 router = APIRouter()
@@ -40,13 +31,7 @@ def search(query: SearchQuery):
 
 
 @router.post("/memory/upload/file", tags=["Memory"])
-async def upload_single_document(
-    file: UploadFile = File(...),
-    user_id: str = Form("id"),
-    role: str = Form("user"),
-    tags: str = Form(""),
-):
-    """上传单个文档并写入 RAG 向量库。"""
+async def upload_single_document(file: UploadFile = File(...), user_id: str = Form("id"), role: str = Form("user"), tags: str = Form("")):
     upload_dir = Path("./cache/uploads")
     file_name = file.filename or f"upload_{int(time.time())}.txt"
     destination = upload_dir / file_name
@@ -65,36 +50,17 @@ async def upload_single_document(
                 continue
             seen_hashes.add(chunk_hash)
             chunk_count += 1
-            qdrant_service.add_memory(
-                text=chunk,
-                id=user_id,
-                tags=tag_list + [parsed.file_name],
-                role=role,
-            )
+            qdrant_service.add_memory(text=chunk, id=user_id, tags=tag_list + [parsed.file_name], role=role)
 
-        return {
-            "status": "success",
-            "file": parsed.file_name,
-            "chunks": chunk_count,
-            "message": "单文件已写入 RAG 数据库",
-        }
+        return {"status": "success", "file": parsed.file_name, "chunks": chunk_count, "message": "单文件已写入 RAG 数据库"}
     except ModuleNotFoundError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"缺少文档解析依赖: {exc.name}，请安装后重试",
-        ) from exc
+        raise HTTPException(status_code=500, detail=f"缺少文档解析依赖: {exc.name}，请安装后重试") from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"上传失败: {exc}") from exc
 
 
 @router.post("/memory/upload/folder", tags=["Memory"])
-def upload_folder_documents(
-    folder_path: str = Form(...),
-    user_id: str = Form("id"),
-    role: str = Form("user"),
-    tags: str = Form(""),
-):
-    """从服务器本地文件夹批量读取文档并写入 RAG 向量库。"""
+def upload_folder_documents(folder_path: str = Form(...), user_id: str = Form("id"), role: str = Form("user"), tags: str = Form("")):
     folder = Path(folder_path)
     if not folder.exists() or not folder.is_dir():
         raise HTTPException(status_code=400, detail="folder_path 不存在或不是目录")
@@ -120,12 +86,7 @@ def upload_folder_documents(
                 if chunk_hash in seen_hashes:
                     continue
                 seen_hashes.add(chunk_hash)
-                qdrant_service.add_memory(
-                    text=chunk,
-                    id=user_id,
-                    tags=tag_list + [parsed.file_name],
-                    role=role,
-                )
+                qdrant_service.add_memory(text=chunk, id=user_id, tags=tag_list + [parsed.file_name], role=role)
                 inserted_for_file += 1
             if inserted_for_file > 0:
                 success_files += 1
@@ -135,74 +96,4 @@ def upload_folder_documents(
         except Exception as exc:
             failed.append({"file": file_path.name, "error": str(exc)})
 
-    return {
-        "status": "success",
-        "folder": str(folder),
-        "files_total": len(files),
-        "files_success": success_files,
-        "chunks_total": total_chunks,
-        "failed": failed,
-        "message": "批量文档处理完成，内容已写入 RAG 数据库",
-    }
-
-
-@router.post("/novel/outline", tags=["Novel"])
-def generate_outline(data: OutlineGenerateInput):
-    """基于 RAG 记忆生成小说大纲，含时间线与人物弧线。"""
-    try:
-        characters = [
-            CharacterProfile(name=c.name, identity=c.identity, goal=c.goal)
-            for c in data.characters
-        ]
-        return novel_writer_service.generate_outline(
-            title=data.title,
-            theme=data.theme,
-            room_id=data.room_id,
-            characters=characters,
-            total_chapters=data.total_chapters,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"大纲生成失败: {exc}") from exc
-
-
-@router.post("/novel/generate_from_outline", tags=["Novel"])
-def generate_novel_from_outline(data: NovelFromOutlineInput):
-    """根据大纲生成小说章节，内置时间与人物一致性约束。"""
-    try:
-        return novel_writer_service.generate_novel_from_outline(
-            outline=data.outline,
-            room_id=data.room_id,
-            style_prompt=data.style_prompt,
-            words_per_chapter=data.words_per_chapter,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"小说生成失败: {exc}") from exc
-
-
-@router.post("/novel/generate_from_prompt", tags=["Novel"])
-def generate_novel_from_prompt(data: NovelFromPromptInput):
-    """根据输入文案直接生成小说（先建大纲再产出章节）。"""
-    try:
-        return novel_writer_service.generate_novel_from_prompt(
-            prompt=data.prompt,
-            room_id=data.room_id,
-            protagonist=data.protagonist,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"文案生成小说失败: {exc}") from exc
-
-
-@router.post("/novel/extract_rewrite_from_txt", tags=["Novel"])
-def extract_and_rewrite_from_txt(data: NovelExtractRewriteInput):
-    """从 txt 小说提取关键要素，并进行二次创作。"""
-    try:
-        extracted = novel_writer_service.extract_key_info_from_txt(data.txt_path)
-        return novel_writer_service.rewrite_from_extracted_info(
-            extracted=extracted,
-            room_id=data.room_id,
-            rewrite_theme=data.rewrite_theme,
-            protagonist=data.protagonist,
-            chapters=data.chapters,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"提取并改写失败: {exc}") from exc
+    return {"status": "success", "folder": str(folder), "files_total": len(files), "files_success": success_files, "chunks_total": total_chunks, "failed": failed, "message": "批量文档处理完成，内容已写入 RAG 数据库"}
