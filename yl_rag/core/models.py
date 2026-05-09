@@ -48,3 +48,11 @@ class NovelFromPromptInput(BaseModel):
     prompt: str = Field(..., min_length=10, description="输入文案")
     room_id: str = Field(default="id", description="RAG 记忆空间")
     protagonist: str = Field(default="林舟", description="主角名")
+
+
+class NovelExtractRewriteInput(BaseModel):
+    txt_path: str = Field(..., description="服务端 txt 小说路径")
+    room_id: str = Field(default="id", description="RAG 记忆空间")
+    rewrite_theme: str = Field(default="宿命与选择", description="二次创作主题")
+    protagonist: str | None = Field(default=None, description="指定主角，不填则自动提取")
+    chapters: int = Field(default=8, ge=4, le=30, description="生成章节数")

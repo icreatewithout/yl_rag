@@ -8,6 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from yl_rag.core.models import (
     MemoryInput,
+    NovelExtractRewriteInput,
     NovelFromOutlineInput,
     NovelFromPromptInput,
     OutlineGenerateInput,
@@ -189,3 +190,19 @@ def generate_novel_from_prompt(data: NovelFromPromptInput):
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"文案生成小说失败: {exc}") from exc
+
+
+@router.post("/novel/extract_rewrite_from_txt", tags=["Novel"])
+def extract_and_rewrite_from_txt(data: NovelExtractRewriteInput):
+    """从 txt 小说提取关键要素，并进行二次创作。"""
+    try:
+        extracted = novel_writer_service.extract_key_info_from_txt(data.txt_path)
+        return novel_writer_service.rewrite_from_extracted_info(
+            extracted=extracted,
+            room_id=data.room_id,
+            rewrite_theme=data.rewrite_theme,
+            protagonist=data.protagonist,
+            chapters=data.chapters,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"提取并改写失败: {exc}") from exc
