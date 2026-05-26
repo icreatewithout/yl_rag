@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,8 +39,16 @@ def _extract_text_from_docx(file_path: Path) -> str:
 
 def _extract_text_from_doc(file_path: Path) -> str:
     """
-    .doc 老格式优先用 textract 读取；若未安装则抛出明确错误。
+    .doc 老格式优先用 textract 读取。
+    Windows 上 textract 常见依赖链包含 fcntl（仅 Unix 可用），
+    因此给出明确错误，避免调用时出现不友好的 ImportError。
     """
+    if platform.system().lower() == "windows":
+        raise RuntimeError(
+            "Windows 环境暂不支持 .doc 解析（textract 依赖 fcntl）。"
+            "建议先将 .doc 转换为 .docx 或 .txt 后上传。"
+        )
+
     textract = _load_optional_module("textract")
     raw = textract.process(str(file_path))
     return raw.decode("utf-8", errors="ignore")
