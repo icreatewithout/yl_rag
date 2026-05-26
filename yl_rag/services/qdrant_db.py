@@ -14,6 +14,8 @@ from qdrant_client.models import (
     VectorParams,
 )
 
+from yl_rag.services.document_ingest import compute_sha256
+
 from yl_rag.services.embedder import embedding_service
 from yl_rag.services.memory_graph import memory_graph
 from yl_rag.settings import settings
@@ -62,7 +64,7 @@ class QdrantService:
         except Exception as e:
             print(f" Error during collection initialization: {e}")
 
-    def add_memory(self, text: str, id: str, tags: list, role: str):
+    def add_memory(self, text: str, id: str, tags: list, role: str, source_name: str | None = None):
         vec = embedding_service.encode(text)
         # 如果 vector 的 shape 是 (1, 768)，需要降维成 (768,)
         # 如果使用 numpy，可以直接用 .flatten() 或 .tolist()
@@ -72,6 +74,10 @@ class QdrantService:
         else:
             processed_vector = vec
 
+        content_sha256 = compute_sha256(text)
+        if self.has_sha256(content_sha256):
+            return False
+
         doc_id = hashlib.md5(text.encode()).hexdigest()
         payload = {
             "text": text,
@@ -79,12 +85,33 @@ class QdrantService:
             "role": role,
             "tags": tags,
             "created_at": time.time(),
+            "content_sha256": content_sha256,
+            "source_name": source_name or "",
         }
         self.client.upsert(
             collection_name=self.collection,
             points=[PointStruct(id=doc_id, vector=processed_vector, payload=payload)],
         )
         memory_graph.add_memory(doc_id, tags, id)
+        return True
+
+
+    def has_sha256(self, content_sha256: str) -> bool:
+        query_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="content_sha256",
+                    match=MatchValue(value=content_sha256),
+                ),
+            ],
+        )
+        points, _ = self.client.scroll(
+            collection_name=self.collection,
+            scroll_filter=query_filter,
+            limit=1,
+            with_payload=False,
+        )
+        return len(points) > 0
 
     def search(self, query: str, id_filter: str = None, top_k: int = 5):
         # 1. 粗排 (召回候选集)

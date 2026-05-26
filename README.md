@@ -146,3 +146,43 @@ curl -X 'POST'
 }'
 
 ```
+
+## 新增接口说明（文档上传 + 小说创作）
+
+### 1) 单文件上传入库（自动 sha256 去重）
+```bash
+curl -X POST 'http://localhost:8000/api/memory/upload/file?id=user_1&role=user' \
+  -F 'file=@./demo.pdf'
+```
+
+### 2) 文件夹批量上传（支持 txt/md/docx/pdf）
+```bash
+curl -X POST 'http://localhost:8000/api/memory/upload/folder' \
+  -H 'Content-Type: application/json' \
+  -d '{"folder_path":"/data/books","id":"user_1","role":"user"}'
+```
+
+### 3) 从 txt 小说提取大纲、人物、时间线
+```bash
+curl -X POST 'http://localhost:8000/api/novel/extract' \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"这里放整本 txt 小说文本..."}'
+```
+
+### 4) 根据文案和大纲生成章节（每次返回一章）
+```bash
+curl -X POST 'http://localhost:8000/api/novel/generate' \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"主角在暴雨夜追查失踪案","outline":{"characters":["陈默","林晚"],"timeline":["夜里","凌晨"]},"chapter_no":1}'
+```
+
+### 5) 根据原文做二次创作（每次返回一章）
+```bash
+curl -X POST 'http://localhost:8000/api/novel/rewrite' \
+  -H 'Content-Type: application/json' \
+  -d '{"source_text":"原章节文本...","outline":{"characters":["陈默"],"timeline":["傍晚","夜里"]},"chapter_no":2}'
+```
+
+### 跨平台依赖说明
+- Linux / Windows 都可使用 `python-docx`（解析 docx）和 `pypdf`（解析 pdf），避免因平台不同引入不同库导致功能不一致。
+- 若环境缺少依赖，接口会返回明确错误信息（例如 `python-docx is not installed`）。

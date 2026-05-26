@@ -8,6 +8,7 @@ class MemoryInput(BaseModel):
     id: str = Field(default="id", description="记忆所属用户")
     role: str | None = Field(default="user", description="记忆角色")
     tags: list[str] = Field(default_factory=list, description="关联实体标签")
+    source_name: str | None = Field(default=None, description="来源文件名")
 
 
 class SearchQuery(BaseModel):
@@ -21,3 +22,25 @@ class SearchResult(BaseModel):
     payload: dict
     score: float
     created_at: float
+
+
+class FolderUploadInput(BaseModel):
+    folder_path: str = Field(..., description="本地文件夹路径")
+    id: str = Field(default="id", description="记忆所属用户")
+    role: str | None = Field(default="user", description="记忆角色")
+
+
+class NovelExtractInput(BaseModel):
+    text: str = Field(..., min_length=100, description="小说原文txt内容")
+
+
+class NovelGenerateInput(BaseModel):
+    prompt: str = Field(..., description="创作指令文案")
+    outline: dict = Field(default_factory=dict, description="提取后的大纲信息")
+    chapter_no: int = Field(default=1, ge=1, description="章节号")
+
+
+class NovelRewriteInput(BaseModel):
+    source_text: str = Field(..., description="需要二创的原文")
+    outline: dict = Field(default_factory=dict, description="大纲信息")
+    chapter_no: int = Field(default=1, ge=1, description="章节号")
