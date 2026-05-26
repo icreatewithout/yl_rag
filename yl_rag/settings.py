@@ -20,7 +20,8 @@ class Settings(BaseSettings):
 
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
-    qdrant_api_key: str | None = "112300"
+    # 安全优化：默认不再内置 API Key，避免凭据硬编码泄露风险
+    qdrant_api_key: str | None = None
     collection_name: str = "memory_palace"
 
     embedder_model: str = "BAAI/bge-base-zh-v1.5"
@@ -33,24 +34,20 @@ class Settings(BaseSettings):
     # --- 运行参数 ---
     host: str = "127.0.0.1"
     port: int = 8000
-    # quantity of workers for uvicorn
     workers_count: int = 1
-    # Enable uvicorn reloading
     reload: bool = True
-
-    print(f".env.{os.getenv('APP_ENV', 'dev')}")
 
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
         env_prefix="YL_RAG_",
         env_file_encoding="utf-8",
-        extra="ignore",  # 允许 .env 中存在类中没定义的变量
+        extra="ignore",
     )
 
 
 settings = Settings()
 
-# 仅在调试时打印
+# 调试信息只展示非敏感配置
 if settings.log_level == LogLevel.DEBUG:
-    print(f" Loaded config from: {ENV_FILE}")
-    print(f" Qdrant Host: {settings.qdrant_host}")
+    print(f"Loaded config from: {ENV_FILE}")
+    print(f"Qdrant Host: {settings.qdrant_host}:{settings.qdrant_port}")
