@@ -17,6 +17,7 @@ except Exception:  # noqa: BLE001
 SUPPORTED_SUFFIXES = {".txt", ".md", ".docx", ".pdf"}
 DEFAULT_CHUNK_SIZE = 1000
 DEFAULT_CHUNK_OVERLAP = 200
+RECURSIVE_SEPARATORS = ["\n\n", "\n", "。", "！", "？", ".", "!", "?", "，", ",", " ", ""]
 
 
 def _norm_text(value: str) -> str:
@@ -52,6 +53,53 @@ def iter_supported_files(folder: Path) -> list[Path]:
     ]
 
 
+def _recursive_split(text: str, chunk_size: int, separators: list[str]) -> list[str]:
+    cleaned = text.strip()
+    if not cleaned:
+        return []
+    if len(cleaned) <= chunk_size:
+        return [cleaned]
+
+    sep = separators[0]
+    if sep == "":
+        return [cleaned[i : i + chunk_size] for i in range(0, len(cleaned), chunk_size)]
+
+    parts = cleaned.split(sep)
+    if len(parts) == 1:
+        return _recursive_split(cleaned, chunk_size, separators[1:])
+
+    chunks: list[str] = []
+    current = ""
+    for part in parts:
+        candidate = f"{current}{sep}{part}" if current else part
+        if len(candidate) <= chunk_size:
+            current = candidate
+            continue
+
+        if current:
+            chunks.extend(_recursive_split(current, chunk_size, separators[1:]))
+        current = part
+
+    if current:
+        chunks.extend(_recursive_split(current, chunk_size, separators[1:]))
+
+    return [c for c in chunks if c.strip()]
+
+
+def _apply_overlap(chunks: list[str], chunk_overlap: int) -> list[str]:
+    if not chunks or chunk_overlap <= 0:
+        return chunks
+
+    merged: list[str] = []
+    for idx, chunk in enumerate(chunks):
+        if idx == 0:
+            merged.append(chunk)
+            continue
+        prefix = chunks[idx - 1][-chunk_overlap:]
+        merged.append(f"{prefix}{chunk}")
+    return merged
+
+
 def split_text_chunks(
     text: str,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
@@ -61,29 +109,8 @@ def split_text_chunks(
     if not normalized:
         return []
 
-    if chunk_overlap >= chunk_size:
-        chunk_overlap = max(0, chunk_size // 5)
+    safe_chunk_size = max(200, chunk_size)
+    safe_overlap = min(max(0, chunk_overlap), safe_chunk_size // 3)
 
-    chunks: list[str] = []
-    start = 0
-    text_len = len(normalized)
-    step = max(1, chunk_size - chunk_overlap)
-
-    while start < text_len:
-        end = min(text_len, start + chunk_size)
-        window = normalized[start:end]
-        if end < text_len:
-            split_pos = max(window.rfind("\n"), window.rfind("。"), window.rfind("."))
-            if split_pos > chunk_size // 3:
-                end = start + split_pos + 1
-                window = normalized[start:end]
-
-        chunk = window.strip()
-        if chunk:
-            chunks.append(chunk)
-
-        if end >= text_len:
-            break
-        start = max(start + step, end - chunk_overlap)
-
-    return chunks
+    base_chunks = _recursive_split(normalized, safe_chunk_size, RECURSIVE_SEPARATORS)
+    return _apply_overlap(base_chunks, safe_overlap)
