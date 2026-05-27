@@ -15,6 +15,8 @@ except Exception:  # noqa: BLE001
     Document = None
 
 SUPPORTED_SUFFIXES = {".txt", ".md", ".docx", ".pdf"}
+DEFAULT_CHUNK_SIZE = 1000
+DEFAULT_CHUNK_OVERLAP = 200
 
 
 def _norm_text(value: str) -> str:
@@ -48,3 +50,40 @@ def iter_supported_files(folder: Path) -> list[Path]:
         for p in folder.rglob("*")
         if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES
     ]
+
+
+def split_text_chunks(
+    text: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+) -> list[str]:
+    normalized = text.strip()
+    if not normalized:
+        return []
+
+    if chunk_overlap >= chunk_size:
+        chunk_overlap = max(0, chunk_size // 5)
+
+    chunks: list[str] = []
+    start = 0
+    text_len = len(normalized)
+    step = max(1, chunk_size - chunk_overlap)
+
+    while start < text_len:
+        end = min(text_len, start + chunk_size)
+        window = normalized[start:end]
+        if end < text_len:
+            split_pos = max(window.rfind("\n"), window.rfind("。"), window.rfind("."))
+            if split_pos > chunk_size // 3:
+                end = start + split_pos + 1
+                window = normalized[start:end]
+
+        chunk = window.strip()
+        if chunk:
+            chunks.append(chunk)
+
+        if end >= text_len:
+            break
+        start = max(start + step, end - chunk_overlap)
+
+    return chunks

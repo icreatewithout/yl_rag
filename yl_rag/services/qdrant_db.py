@@ -64,7 +64,17 @@ class QdrantService:
         except Exception as e:
             print(f" Error during collection initialization: {e}")
 
-    def add_memory(self, text: str, id: str, tags: list, role: str, source_name: str | None = None):
+    def add_memory(
+        self,
+        text: str,
+        id: str,
+        tags: list,
+        role: str,
+        source_name: str | None = None,
+        document_id: str | None = None,
+        chunk_index: int = 0,
+        chunk_total: int = 1,
+    ):
         vec = embedding_service.encode(text)
         # 如果 vector 的 shape 是 (1, 768)，需要降维成 (768,)
         # 如果使用 numpy，可以直接用 .flatten() 或 .tolist()
@@ -87,6 +97,9 @@ class QdrantService:
             "created_at": time.time(),
             "content_sha256": content_sha256,
             "source_name": source_name or "",
+            "document_id": document_id or doc_id,
+            "chunk_index": chunk_index,
+            "chunk_total": chunk_total,
         }
         self.client.upsert(
             collection_name=self.collection,
