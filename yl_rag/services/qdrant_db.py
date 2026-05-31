@@ -14,7 +14,7 @@ from qdrant_client.models import (
     VectorParams,
 )
 
-from yl_rag.services.embedder import embedding_service
+from yl_rag.services.embedder import get_embedding_service
 from yl_rag.services.memory_graph import memory_graph
 from yl_rag.settings import settings
 
@@ -63,7 +63,7 @@ class QdrantService:
             print(f" Error during collection initialization: {e}")
 
     def add_memory(self, text: str, id: str, tags: list, role: str):
-        vec = embedding_service.encode(text)
+        vec = get_embedding_service().encode(text)
         # 如果 vector 的 shape 是 (1, 768)，需要降维成 (768,)
         # 如果使用 numpy，可以直接用 .flatten() 或 .tolist()
         if isinstance(vec, np.ndarray):
@@ -88,7 +88,7 @@ class QdrantService:
 
     def search(self, query: str, id_filter: str = None, top_k: int = 5):
         # 1. 粗排 (召回候选集)
-        query_vec = embedding_service.encode(query).flatten().tolist()
+        query_vec = get_embedding_service().encode(query).flatten().tolist()
         filt = (
             Filter(must=[FieldCondition(key="id", match=MatchValue(value=id_filter))])
             if id_filter
@@ -124,7 +124,7 @@ class QdrantService:
 
         # 3. 精排 (Reranker)
         texts = [c["hit"].payload["text"] for c in top_10]
-        rr_scores = embedding_service.rerank(query, texts)
+        rr_scores = get_embedding_service().rerank(query, texts)
 
         print(top_10)
 
@@ -146,4 +146,12 @@ class QdrantService:
         return results[:top_k]
 
 
-qdrant_service = QdrantService()
+_qdrant_service: QdrantService | None = None
+
+
+def get_qdrant_service() -> QdrantService:
+    """Return a lazily initialized Qdrant service."""
+    global _qdrant_service
+    if _qdrant_service is None:
+        _qdrant_service = QdrantService()
+    return _qdrant_service
