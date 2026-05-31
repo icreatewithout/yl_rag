@@ -196,3 +196,19 @@ curl -X POST 'http://localhost:8000/api/memory/search' \
 
 - `context_window` 表示命中分片前后各合并多少个同文档临近分片，默认 `1`，最大 `5`。
 - 返回结果的 `payload.text` 是合并后的连续上下文，`payload.matched_text` 保留原始命中分片，`payload.merged_chunk_range` 标记合并分片范围。
+
+## GPU / 批量 / CPU 多线程配置
+
+默认会自动检测 CUDA；如果开发机有 6G 显存的 RTX 4060，会优先启用 GPU + FP16 推理，并保持可回退 CPU，不破坏无 GPU 环境。
+
+```bash
+# auto/cuda/cpu，默认 auto；强制 CPU 可设置为 cpu
+export YL_RAG_INFERENCE_DEVICE=auto
+# 开启批量编码与批量 rerank，默认 True
+export YL_RAG_ENABLE_BATCH_MODE=True
+# 6G 显存建议 16~32，显存不足可调小
+export YL_RAG_EMBEDDING_BATCH_SIZE=32
+export YL_RAG_RERANKER_BATCH_SIZE=16
+# CPU 模式/回退时使用的 torch 线程数
+export YL_RAG_CPU_THREADS=8
+```

@@ -76,41 +76,91 @@ class QdrantService:
         chunk_total: int = 1,
         document_sha256: str | None = None,
     ):
-        vec = embedding_service.encode(text)
-        # 如果 vector 的 shape 是 (1, 768)，需要降维成 (768,)
-        # 如果使用 numpy，可以直接用 .flatten() 或 .tolist()
-        if isinstance(vec, np.ndarray):
-            # 确保它是一维数组：[0.1, 0.2, ...]
-            processed_vector = vec.flatten().tolist()
-        else:
-            processed_vector = vec
-
-        content_sha256 = compute_sha256(text)
-        if self.has_sha256(content_sha256):
-            return False
-
-        doc_id = hashlib.md5(
-            f"{document_id or ''}:{chunk_index}:{content_sha256}".encode(),
-        ).hexdigest()
-        payload = {
-            "text": text,
-            "id": id,
-            "role": role,
-            "tags": tags,
-            "created_at": time.time(),
-            "content_sha256": content_sha256,
-            "document_sha256": document_sha256 or content_sha256,
-            "source_name": source_name or "",
-            "document_id": document_id or doc_id,
-            "chunk_index": chunk_index,
-            "chunk_total": chunk_total,
-        }
-        self.client.upsert(
-            collection_name=self.collection,
-            points=[PointStruct(id=doc_id, vector=processed_vector, payload=payload)],
+        result = self.add_memories(
+            [text],
+            id,
+            tags,
+            role,
+            source_name,
+            document_id=document_id,
+            start_chunk_index=chunk_index,
+            chunk_total=chunk_total,
+            document_sha256=document_sha256,
         )
-        memory_graph.add_memory(doc_id, tags, id)
-        return True
+        return result["inserted"] == 1
+
+    def add_memories(
+        self,
+        texts: list[str],
+        id: str,
+        tags: list,
+        role: str,
+        source_name: str | None = None,
+        document_id: str | None = None,
+        start_chunk_index: int = 0,
+        chunk_total: int | None = None,
+        document_sha256: str | None = None,
+    ) -> dict:
+        if not texts:
+            return {"inserted": 0, "skipped": 0}
+
+        chunk_total_value = chunk_total or len(texts)
+        point_items = []
+        skipped = 0
+        for offset, text in enumerate(texts):
+            chunk_index = start_chunk_index + offset
+            content_sha256 = compute_sha256(text)
+            if self.has_sha256(content_sha256):
+                skipped += 1
+                continue
+            doc_id = hashlib.md5(
+                f"{document_id or ''}:{chunk_index}:{content_sha256}".encode(),
+            ).hexdigest()
+            point_items.append(
+                {
+                    "point_id": doc_id,
+                    "text": text,
+                    "content_sha256": content_sha256,
+                    "chunk_index": chunk_index,
+                },
+            )
+
+        if not point_items:
+            return {"inserted": 0, "skipped": skipped}
+
+        vectors = embedding_service.encode([item["text"] for item in point_items])
+        if isinstance(vectors, np.ndarray):
+            vectors = vectors.reshape(len(point_items), -1).tolist()
+
+        now = time.time()
+        points = []
+        for item, vector in zip(point_items, vectors, strict=False):
+            payload = {
+                "text": item["text"],
+                "id": id,
+                "role": role,
+                "tags": tags,
+                "created_at": now,
+                "content_sha256": item["content_sha256"],
+                "document_sha256": document_sha256 or item["content_sha256"],
+                "source_name": source_name or "",
+                "document_id": document_id or item["point_id"],
+                "chunk_index": item["chunk_index"],
+                "chunk_total": chunk_total_value,
+            }
+            points.append(
+                PointStruct(
+                    id=item["point_id"],
+                    vector=vector,
+                    payload=payload,
+                ),
+            )
+
+        self.client.upsert(collection_name=self.collection, points=points)
+        for item in point_items:
+            memory_graph.add_memory(item["point_id"], tags, id)
+
+        return {"inserted": len(points), "skipped": skipped}
 
     def has_sha256(self, content_sha256: str) -> bool:
         return self._has_payload_value("content_sha256", content_sha256)

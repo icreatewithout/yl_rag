@@ -42,24 +42,23 @@ def _ingest_chunked_text(
     document_id = hashlib.md5(
         f"{owner_id}:{source_name}:{content_sha256}".encode(),
     ).hexdigest()
-    inserted = 0
-    chunk_total = len(chunks)
-    for idx, chunk in enumerate(chunks):
-        ok = qdrant_service.add_memory(
-            chunk,
-            owner_id,
-            tags,
-            role,
-            source_name,
-            document_id=document_id,
-            chunk_index=idx,
-            chunk_total=chunk_total,
-            document_sha256=content_sha256,
-        )
-        if ok:
-            inserted += 1
+    ingest_result = qdrant_service.add_memories(
+        chunks,
+        owner_id,
+        tags,
+        role,
+        source_name,
+        document_id=document_id,
+        chunk_total=len(chunks),
+        document_sha256=content_sha256,
+    )
 
-    return {"status": "success", "chunks": inserted, "document_id": document_id}
+    return {
+        "status": "success",
+        "chunks": ingest_result["inserted"],
+        "skipped_chunks": ingest_result["skipped"],
+        "document_id": document_id,
+    }
 
 
 @router.post("/memory/add", tags=["Memory"])
