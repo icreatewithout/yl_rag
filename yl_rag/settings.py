@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     time_decay_lambda: float = 0.05
     model_cache_dir: str = "./cache/models"
 
+    # --- 模型推理性能参数 ---
+    # auto: 自动检测 CUDA；cuda: 强制 GPU（不可用时自动回退 CPU）；cpu: 强制 CPU
+    inference_device: str = "auto"
+    enable_batch_mode: bool = True
+    embedding_batch_size: int = 32
+    reranker_batch_size: int = 16
+    inference_show_progress: bool = False
+    cpu_threads: int = max(1, (os.cpu_count() or 2) - 1)
+
     log_level: LogLevel = LogLevel.DEBUG
 
     # --- 运行参数 ---

@@ -146,3 +146,71 @@ curl -X 'POST'
 }'
 
 ```
+
+## 新增接口说明（文档上传 + 小说创作）
+
+### 1) 单文件上传入库（自动 sha256 去重）
+```bash
+curl -X POST 'http://localhost:8000/api/memory/upload/file?id=user_1&role=user' \
+  -F 'file=@./demo.pdf'
+```
+
+### 2) 文件夹批量上传（支持 txt/md/docx/pdf）
+```bash
+curl -X POST 'http://localhost:8000/api/memory/upload/folder' \
+  -H 'Content-Type: application/json' \
+  -d '{"folder_path":"/data/books","id":"user_1","role":"user"}'
+```
+
+### 3) 从 txt 小说提取大纲、人物、时间线
+```bash
+curl -X POST 'http://localhost:8000/api/novel/extract' \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"这里放整本 txt 小说文本..."}'
+```
+
+### 4) 根据文案和大纲生成章节（每次返回一章）
+```bash
+curl -X POST 'http://localhost:8000/api/novel/generate' \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"主角在暴雨夜追查失踪案","outline":{"characters":["陈默","林晚"],"timeline":["夜里","凌晨"]},"chapter_no":1}'
+```
+
+### 5) 根据原文做二次创作（每次返回一章）
+```bash
+curl -X POST 'http://localhost:8000/api/novel/rewrite' \
+  -H 'Content-Type: application/json' \
+  -d '{"source_text":"原章节文本...","outline":{"characters":["陈默"],"timeline":["傍晚","夜里"]},"chapter_no":2}'
+```
+
+### 跨平台依赖说明
+- Linux / Windows 都可使用 `python-docx`（解析 docx）和 `pypdf`（解析 pdf），避免因平台不同引入不同库导致功能不一致。
+- 若环境缺少依赖，接口会返回明确错误信息（例如 `python-docx is not installed`）。
+
+### 6) 查询时合并临近块，返回连续上下文
+```bash
+curl -X POST 'http://localhost:8000/api/memory/search' \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"查询问题","id_filter":"user_1","top_k":3,"context_window":1}'
+```
+
+- `context_window` 表示命中分片前后各合并多少个同文档临近分片，默认 `1`，最大 `5`。
+- 返回结果的 `payload.text` 是合并后的连续上下文，`payload.matched_text` 保留原始命中分片，`payload.merged_chunk_range` 标记合并分片范围。
+
+## GPU / 批量 / CPU 多线程配置
+
+默认会自动检测 CUDA；如果开发机有 6G 显存的 RTX 4060，会优先启用 GPU + FP16 推理，并保持可回退 CPU，不破坏无 GPU 环境。
+
+```bash
+# auto/cuda/cpu，默认 auto；强制 CPU 可设置为 cpu
+export YL_RAG_INFERENCE_DEVICE=auto
+# 开启批量编码与批量 rerank，默认 True
+export YL_RAG_ENABLE_BATCH_MODE=True
+# 6G 显存建议 16~32，显存不足可调小
+export YL_RAG_EMBEDDING_BATCH_SIZE=32
+export YL_RAG_RERANKER_BATCH_SIZE=16
+# 默认关闭 FlagEmbedding/tqdm 推理进度条，避免每次上传刷 pre tokenize / Inference Embeddings 日志
+export YL_RAG_INFERENCE_SHOW_PROGRESS=False
+# CPU 模式/回退时使用的 torch 线程数
+export YL_RAG_CPU_THREADS=8
+```
