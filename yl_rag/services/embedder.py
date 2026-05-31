@@ -1,5 +1,8 @@
 import logging
 import os
+from collections.abc import Callable
+from inspect import Parameter, signature
+from typing import Any
 
 import numpy as np
 import torch
@@ -31,12 +34,25 @@ def _install_tokenizer_warning_filter() -> None:
     )
 
 
+def _call_with_supported_kwargs(method: Callable[..., Any], **kwargs: Any) -> Any:
+    method_signature = signature(method)
+    parameters = method_signature.parameters
+    if any(p.kind == Parameter.VAR_KEYWORD for p in parameters.values()):
+        return method(**kwargs)
+    supported_kwargs = {
+        key: value for key, value in kwargs.items() if key in parameters
+    }
+    return method(**supported_kwargs)
+
+
 class EmbeddingService:
     def __init__(self):
         _install_tokenizer_warning_filter()
         self._configure_cpu_threads()
         self.device = self._select_device()
         os.makedirs(settings.model_cache_dir, exist_ok=True)
+        if not settings.inference_show_progress:
+            os.environ.setdefault("TQDM_DISABLE", "1")
 
         logger.info(
             "🚀 Initializing AI Models on %s (batch_mode=%s, embed_batch=%s, rerank_batch=%s)...",
@@ -126,10 +142,12 @@ class EmbeddingService:
     def encode(self, texts: str | list[str]) -> np.ndarray:
         """始终通过批量入口编码，避免逐条 encode/pad 带来的 fast tokenizer 警告。"""
         input_texts = [texts] if isinstance(texts, str) else texts
-        return self.embedder.encode(
-            input_texts,
+        return _call_with_supported_kwargs(
+            self.embedder.encode,
+            sentences=input_texts,
             batch_size=self.embedding_batch_size,
             convert_to_numpy=True,
+            show_progress_bar=settings.inference_show_progress,
         )
 
     def rerank(self, query: str, texts: list[str]) -> list[float]:
@@ -138,9 +156,11 @@ class EmbeddingService:
             return []
 
         pairs = [[query, t] for t in texts]
-        scores = self.reranker.compute_score(
-            pairs,
+        scores = _call_with_supported_kwargs(
+            self.reranker.compute_score,
+            sentence_pairs=pairs,
             batch_size=self.reranker_batch_size,
+            show_progress_bar=settings.inference_show_progress,
         )
         return [float(s) for s in scores]
 

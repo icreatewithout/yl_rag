@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     enable_batch_mode: bool = True
     embedding_batch_size: int = 32
     reranker_batch_size: int = 16
+    inference_show_progress: bool = False
     cpu_threads: int = max(1, (os.cpu_count() or 2) - 1)
 
     log_level: LogLevel = LogLevel.DEBUG

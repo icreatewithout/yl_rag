@@ -209,6 +209,8 @@ export YL_RAG_ENABLE_BATCH_MODE=True
 # 6G 显存建议 16~32，显存不足可调小
 export YL_RAG_EMBEDDING_BATCH_SIZE=32
 export YL_RAG_RERANKER_BATCH_SIZE=16
+# 默认关闭 FlagEmbedding/tqdm 推理进度条，避免每次上传刷 pre tokenize / Inference Embeddings 日志
+export YL_RAG_INFERENCE_SHOW_PROGRESS=False
 # CPU 模式/回退时使用的 torch 线程数
 export YL_RAG_CPU_THREADS=8
 ```
