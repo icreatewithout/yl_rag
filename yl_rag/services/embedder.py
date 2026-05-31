@@ -42,15 +42,22 @@ def _install_tokenizer_warning_filter() -> None:
     _TOKENIZER_WARNING_FILTER_INSTALLED = True
 
 
-def _call_with_supported_kwargs(method: Callable[..., Any], **kwargs: Any) -> Any:
-    method_signature = signature(method)
+def _call_with_supported_kwargs(
+    method: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    try:
+        method_signature = signature(method)
+    except (TypeError, ValueError):
+        return method(*args, **kwargs)
     parameters = method_signature.parameters
     if any(p.kind == Parameter.VAR_KEYWORD for p in parameters.values()):
-        return method(**kwargs)
+        return method(*args, **kwargs)
     supported_kwargs = {
         key: value for key, value in kwargs.items() if key in parameters
     }
-    return method(**supported_kwargs)
+    return method(*args, **supported_kwargs)
 
 
 class EmbeddingService:
@@ -168,7 +175,7 @@ class EmbeddingService:
         input_texts = [texts] if isinstance(texts, str) else texts
         return _call_with_supported_kwargs(
             self.embedder.encode,
-            sentences=input_texts,
+            input_texts,
             batch_size=self.embedding_batch_size,
             convert_to_numpy=True,
             show_progress_bar=settings.inference_show_progress,
@@ -182,7 +189,7 @@ class EmbeddingService:
         pairs = [[query, t] for t in texts]
         scores = _call_with_supported_kwargs(
             self.reranker.compute_score,
-            sentence_pairs=pairs,
+            pairs,
             batch_size=self.reranker_batch_size,
             show_progress_bar=settings.inference_show_progress,
         )

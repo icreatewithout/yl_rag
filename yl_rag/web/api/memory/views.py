@@ -1,4 +1,5 @@
 import hashlib
+import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -81,9 +82,13 @@ def add_memory(data: MemoryInput):
 async def upload_file(id: str, role: str = "user", file: UploadFile = File(...)):
     try:
         suffix = Path(file.filename or "").suffix.lower()
-        temp_path = Path("/tmp") / (file.filename or "uploaded.txt")
-        temp_path.write_bytes(await file.read())
-        text = read_document(temp_path)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(await file.read())
+        try:
+            text = read_document(temp_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
         result = _ingest_chunked_text(
             text,
             id,
@@ -107,6 +112,7 @@ def upload_folder(data: FolderUploadInput):
     skipped = 0
     uploaded_chunks = 0
     failed_files: list[str] = []
+    failed_errors: list[dict[str, str]] = []
     for file_path in iter_supported_files(folder):
         try:
             text = read_document(file_path)
@@ -122,14 +128,16 @@ def upload_folder(data: FolderUploadInput):
                 uploaded_chunks += int(result["chunks"])
             else:
                 skipped += 1
-        except Exception:
+        except Exception as e:
             failed_files.append(str(file_path))
+            failed_errors.append({"file": str(file_path), "error": str(e)})
 
     return {
         "uploaded_files": uploaded,
         "uploaded_chunks": uploaded_chunks,
         "skipped_files": skipped,
         "failed_files": failed_files,
+        "failed_errors": failed_errors,
     }
 
 

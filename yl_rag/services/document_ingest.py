@@ -28,10 +28,19 @@ def compute_sha256(text: str) -> str:
     return hashlib.sha256(_norm_text(text).encode("utf-8")).hexdigest()
 
 
+def _read_text_with_fallback(file_path: Path) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "gb18030", "gbk", "big5"):
+        try:
+            return file_path.read_text(encoding=encoding)
+        except UnicodeDecodeError:
+            continue
+    return file_path.read_text(encoding="utf-8", errors="ignore")
+
+
 def read_document(file_path: Path) -> str:
     suffix = file_path.suffix.lower()
     if suffix in {".txt", ".md"}:
-        return file_path.read_text(encoding="utf-8", errors="ignore")
+        return _read_text_with_fallback(file_path)
     if suffix == ".docx":
         if Document is None:
             raise RuntimeError("python-docx is not installed")
