@@ -15,6 +15,12 @@ class SearchQuery(BaseModel):
     text: str = Field(..., max_length=200, description="查询内容")
     id_filter: str | None = Field(default=None, description="仅在此房间内搜索")
     top_k: int = Field(default=5, ge=1, le=20, description="返回结果数量")
+    context_window: int = Field(
+        default=1,
+        ge=0,
+        le=5,
+        description="命中块前后合并的临近块数量",
+    )
 
 
 class SearchResult(BaseModel):

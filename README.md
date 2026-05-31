@@ -186,3 +186,13 @@ curl -X POST 'http://localhost:8000/api/novel/rewrite' \
 ### 跨平台依赖说明
 - Linux / Windows 都可使用 `python-docx`（解析 docx）和 `pypdf`（解析 pdf），避免因平台不同引入不同库导致功能不一致。
 - 若环境缺少依赖，接口会返回明确错误信息（例如 `python-docx is not installed`）。
+
+### 6) 查询时合并临近块，返回连续上下文
+```bash
+curl -X POST 'http://localhost:8000/api/memory/search' \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"查询问题","id_filter":"user_1","top_k":3,"context_window":1}'
+```
+
+- `context_window` 表示命中分片前后各合并多少个同文档临近分片，默认 `1`，最大 `5`。
+- 返回结果的 `payload.text` 是合并后的连续上下文，`payload.matched_text` 保留原始命中分片，`payload.merged_chunk_range` 标记合并分片范围。

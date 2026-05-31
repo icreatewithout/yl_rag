@@ -28,14 +28,20 @@ def _ingest_chunked_text(
     tags: list[str],
 ) -> dict:
     content_sha256 = compute_sha256(text)
-    if qdrant_service.has_sha256(content_sha256):
-        return {"status": "skip", "chunks": 0, "message": "Duplicate content by sha256"}
+    if qdrant_service.has_document_sha256(content_sha256):
+        return {
+            "status": "skip",
+            "chunks": 0,
+            "message": "Duplicate content by sha256",
+        }
 
     chunks = split_text_chunks(text)
     if not chunks:
         return {"status": "skip", "chunks": 0, "message": "Empty text"}
 
-    document_id = hashlib.md5(f"{owner_id}:{source_name}:{content_sha256}".encode()).hexdigest()
+    document_id = hashlib.md5(
+        f"{owner_id}:{source_name}:{content_sha256}".encode(),
+    ).hexdigest()
     inserted = 0
     chunk_total = len(chunks)
     for idx, chunk in enumerate(chunks):
@@ -48,6 +54,7 @@ def _ingest_chunked_text(
             document_id=document_id,
             chunk_index=idx,
             chunk_total=chunk_total,
+            document_sha256=content_sha256,
         )
         if ok:
             inserted += 1
@@ -59,7 +66,13 @@ def _ingest_chunked_text(
 def add_memory(data: MemoryInput):
     try:
         source_name = data.source_name or "memory_add"
-        result = _ingest_chunked_text(data.text, data.id, data.role or "user", source_name, data.tags)
+        result = _ingest_chunked_text(
+            data.text,
+            data.id,
+            data.role or "user",
+            source_name,
+            data.tags,
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -72,7 +85,13 @@ async def upload_file(id: str, role: str = "user", file: UploadFile = File(...))
         temp_path = Path("/tmp") / (file.filename or "uploaded.txt")
         temp_path.write_bytes(await file.read())
         text = read_document(temp_path)
-        result = _ingest_chunked_text(text, id, role, file.filename or "uploaded.txt", [suffix])
+        result = _ingest_chunked_text(
+            text,
+            id,
+            role,
+            file.filename or "uploaded.txt",
+            [suffix],
+        )
         result["file"] = file.filename
         return result
     except Exception as e:
@@ -118,6 +137,11 @@ def upload_folder(data: FolderUploadInput):
 @router.post("/memory/search", response_model=list[SearchResult], tags=["Retrieval"])
 def search(query: SearchQuery):
     try:
-        return qdrant_service.search(query.text, query.id_filter, query.top_k)
+        return qdrant_service.search(
+            query.text,
+            query.id_filter,
+            query.top_k,
+            query.context_window,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
