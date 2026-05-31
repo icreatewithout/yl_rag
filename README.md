@@ -146,3 +146,140 @@ curl -X 'POST'
 }'
 
 ```
+
+## 智能客服 RAG 数据格式与 Socket.IO 接入
+
+本项目在保留现有 `yl_rag` 目录结构、环境变量前缀和 REST 配置的基础上，新增了客服知识库入库格式、REST 入库/问答接口，以及可供 Next.js 客户端连接的 Socket.IO 通道。
+
+### 客服知识库入库文本格式
+
+客服知识建议先用结构化 JSON 管理，再由服务端统一渲染成稳定的 RAG 文本块。推荐字段如下：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `doc_id` | 是 | 业务侧稳定文档 ID，例如 FAQ 编号、政策编号 |
+| `tenant_id` | 是 | 租户/店铺/业务线 ID，用于检索隔离 |
+| `locale` | 否 | 语言区域，默认 `zh-CN` |
+| `doc_type` | 是 | `faq`、`policy`、`product`、`troubleshooting`、`workflow` |
+| `title` | 是 | 方便检索的短标题 |
+| `question` | 否 | FAQ 类文档的典型用户问法 |
+| `answer` | 是 | 可直接回复用户的标准答案 |
+| `keywords` | 否 | 同义词、实体、业务关键词 |
+| `product_ids` | 否 | 关联商品/SKU/SPU ID |
+| `source_url` | 否 | 原始知识来源 |
+| `updated_at` | 否 | ISO-8601 更新时间 |
+| `metadata` | 否 | 扩展字段，例如渠道、优先级、人工客服组 |
+
+服务端会将上述 JSON 渲染成以下文本格式后写入现有向量库：
+
+```text
+[文档ID] faq_return_001
+[租户] store_1001
+[语言] zh-CN
+[类型] faq
+[标题] 7天无理由退货规则
+[用户问题] 商品签收后多久可以申请无理由退货？
+[标准答案] 自物流签收次日起7天内，商品保持完好且不影响二次销售，可在订单详情页申请无理由退货。定制商品、生鲜、拆封后影响安全或卫生的商品不支持无理由退货。
+[关键词] 退货, 无理由退货, 售后, 7天
+[商品ID] SKU-BOOK-001
+[来源] https://example.com/help/return-policy
+[更新时间] 2026-05-31T00:00:00+00:00
+```
+
+### REST 入库示例
+
+```bash
+curl -X POST 'http://localhost:8000/api/customer-service/ingest' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "documents": [
+      {
+        "doc_id": "faq_return_001",
+        "tenant_id": "store_1001",
+        "locale": "zh-CN",
+        "doc_type": "faq",
+        "title": "7天无理由退货规则",
+        "question": "商品签收后多久可以申请无理由退货？",
+        "answer": "自物流签收次日起7天内，商品保持完好且不影响二次销售，可在订单详情页申请无理由退货。定制商品、生鲜、拆封后影响安全或卫生的商品不支持无理由退货。",
+        "keywords": ["退货", "无理由退货", "售后", "7天"],
+        "product_ids": ["SKU-BOOK-001"],
+        "source_url": "https://example.com/help/return-policy",
+        "updated_at": "2026-05-31T00:00:00+00:00"
+      }
+    ]
+  }'
+```
+
+### REST 问答示例
+
+```bash
+curl -X POST 'http://localhost:8000/api/customer-service/chat' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "tenant_id": "store_1001",
+    "session_id": "web-session-001",
+    "message": "我签收5天了还能退货吗？",
+    "top_k": 5
+  }'
+```
+
+### Next.js + Socket.IO 客户端示例
+
+安装客户端依赖：
+
+```bash
+npm install socket.io-client
+```
+
+在 Next.js 客户端组件中连接 `yl_rag`：
+
+```tsx
+"use client";
+
+import { useEffect, useState } from "react";
+import { io, Socket } from "socket.io-client";
+
+export default function CustomerServiceChat() {
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [answer, setAnswer] = useState("");
+
+  useEffect(() => {
+    const nextSocket = io("http://localhost:8000", {
+      path: "/ws/socket.io",
+      transports: ["websocket"],
+    });
+
+    nextSocket.on("customer:ready", () => console.log("客服已连接"));
+    nextSocket.on("customer:answer", (payload) => setAnswer(payload.answer));
+    nextSocket.on("customer:error", (payload) => setAnswer(payload.message));
+    setSocket(nextSocket);
+
+    return () => nextSocket.disconnect();
+  }, []);
+
+  const ask = () => {
+    socket?.emit("customer:message", {
+      tenant_id: "store_1001",
+      session_id: "web-session-001",
+      message: "我签收5天了还能退货吗？",
+      top_k: 5,
+    });
+  };
+
+  return (
+    <main>
+      <button onClick={ask}>咨询客服</button>
+      <pre>{answer}</pre>
+    </main>
+  );
+}
+```
+
+Socket.IO 事件约定：
+
+| 方向 | 事件名 | 说明 |
+| --- | --- | --- |
+| 服务端 -> 客户端 | `customer:ready` | 连接成功确认 |
+| 客户端 -> 服务端 | `customer:message` | 发送用户问题，字段同 REST `/chat` |
+| 服务端 -> 客户端 | `customer:answer` | 返回 `answer`、`sources`、`fallback` |
+| 服务端 -> 客户端 | `customer:error` | 参数错误或服务异常 |
