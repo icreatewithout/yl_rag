@@ -11,8 +11,29 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+TOKENIZER_FAST_PAD_WARNING = (
+    "You're using a BertTokenizerFast tokenizer. Please note that with a fast "
+    "tokenizer, using the `__call__` method is faster than using a method to "
+    "encode the text followed by a call to the `pad` method"
+)
+
+
+class TokenizerFastPadWarningFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return TOKENIZER_FAST_PAD_WARNING not in record.getMessage()
+
+
+def _install_tokenizer_warning_filter() -> None:
+    warning_filter = TokenizerFastPadWarningFilter()
+    logging.getLogger("transformers").addFilter(warning_filter)
+    logging.getLogger("transformers.tokenization_utils_base").addFilter(
+        warning_filter,
+    )
+
+
 class EmbeddingService:
     def __init__(self):
+        _install_tokenizer_warning_filter()
         self._configure_cpu_threads()
         self.device = self._select_device()
         os.makedirs(settings.model_cache_dir, exist_ok=True)
@@ -103,7 +124,7 @@ class EmbeddingService:
             raise e
 
     def encode(self, texts: str | list[str]) -> np.ndarray:
-        """支持单条与批量编码，批量模式用于上传分片时提高吞吐量。"""
+        """始终通过批量入口编码，避免逐条 encode/pad 带来的 fast tokenizer 警告。"""
         input_texts = [texts] if isinstance(texts, str) else texts
         return self.embedder.encode(
             input_texts,
