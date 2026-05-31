@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 from collections.abc import Callable
 from inspect import Parameter, signature
 from typing import Any
@@ -26,12 +27,19 @@ class TokenizerFastPadWarningFilter(logging.Filter):
         return TOKENIZER_FAST_PAD_WARNING not in record.getMessage()
 
 
+_TOKENIZER_WARNING_FILTER_INSTALLED = False
+
+
 def _install_tokenizer_warning_filter() -> None:
+    global _TOKENIZER_WARNING_FILTER_INSTALLED
+    if _TOKENIZER_WARNING_FILTER_INSTALLED:
+        return
     warning_filter = TokenizerFastPadWarningFilter()
     logging.getLogger("transformers").addFilter(warning_filter)
     logging.getLogger("transformers.tokenization_utils_base").addFilter(
         warning_filter,
     )
+    _TOKENIZER_WARNING_FILTER_INSTALLED = True
 
 
 def _call_with_supported_kwargs(method: Callable[..., Any], **kwargs: Any) -> Any:
@@ -46,7 +54,23 @@ def _call_with_supported_kwargs(method: Callable[..., Any], **kwargs: Any) -> An
 
 
 class EmbeddingService:
+    _instance: "EmbeddingService | None" = None
+    _init_lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
     def __init__(self):
+        with self._init_lock:
+            if self._initialized:
+                return
+            self._initialize_once()
+            self._initialized = True
+
+    def _initialize_once(self) -> None:
         _install_tokenizer_warning_filter()
         self._configure_cpu_threads()
         self.device = self._select_device()
